@@ -2,29 +2,29 @@ package sshcommander
 
 import "golang.org/x/crypto/ssh"
 
-//SSHHost | Has an informations of host
-type SSHHost struct {
+//Host | Has an informations of host
+type Host struct {
 	IP   string
 	Port int
 }
 
-//SSHCredentials | Has an informations of credentials
-type SSHCredentials struct {
+//Credentials | Has an informations of credentials
+type Credentials struct {
 	User     string
 	Password string
 	Keys     []string
 }
 
-//SSHCommanderOptions | Has an informations of options to SSHCommander
-type SSHCommanderOptions struct {
-	SSHHost         *SSHHost
-	SSHCredentials  *SSHCredentials
+//Options | Has an informations of options to SSHCommander
+type Options struct {
+	Host            *Host
+	Credentials     *Credentials
 	HostKeyCallBack *ssh.HostKeyCallback
 	Output          bool
 }
 
-//SSHCommand | The command for run
-type SSHCommand struct {
+//Command | The command for run
+type Command struct {
 	Cmd string
 	Env []string
 }

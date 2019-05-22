@@ -8,36 +8,38 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
-//UploadMemoryFile | Copy local memory file to remote machine
-func (sshCommander *SSHCommander) UploadMemoryFile(size int64, mode os.FileMode, fileName string, contents io.Reader, destinationPath string) error {
-	return sshCommander.copy(size, mode, fileName, contents, destinationPath)
+//UploadFileInMemory | Copy local memory file to remote machine
+func (sshCommander *SSHCommander) UploadFileInMemory(size int64, mode os.FileMode, fileName string, contents string, destinationPath string) error {
+	return sshCommander.copy(size, mode, fileName, strings.NewReader(contents), destinationPath)
 }
 
 //UploadFile | Copy local file to remote machine
-func (sshCommander *SSHCommander) UploadFile(localFile, remotePath string) error {
-	f, err := os.Open(localFile)
+func (sshCommander *SSHCommander) UploadFile(localPath, remotePath string) error {
+	f, err := os.Open(localPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+
 	s, err := f.Stat()
 	if err != nil {
 		return err
 	}
-	return sshCommander.copy(s.Size(), s.Mode().Perm(), path.Base(localFile), f, remotePath)
+
+	return sshCommander.copy(s.Size(), s.Mode().Perm(), path.Base(localPath), f, remotePath)
 }
 
 //DownloadFile | Copy remote file to local machine
-func (sshCommander *SSHCommander) DownloadFile(remoteFile, localPath string) error {
-	mode, err := sshCommander.getRemoteFileAccessRights(remoteFile)
+func (sshCommander *SSHCommander) DownloadFile(remotePath, localPath string) error {
+	mode, err := sshCommander.readRemoteFileAccessRights(remotePath)
 	if err != nil {
 		return err
 	}
 
-	fileName := filepath.Base(remoteFile)
-	localFile, err := os.OpenFile(path.Join(localPath, fileName), os.O_CREATE|os.O_RDWR, mode)
+	localFile, err := os.OpenFile(path.Join(localPath, filepath.Base(remotePath)), os.O_CREATE|os.O_RDWR, mode)
 	if err != nil {
 		return err
 	}
@@ -51,15 +53,11 @@ func (sshCommander *SSHCommander) DownloadFile(remoteFile, localPath string) err
 
 	session.Stdout = localFile
 
-	err = session.Run("/bin/cat " + remoteFile)
-	if err != nil {
-		return err
-	}
-	return nil
+	return session.Run(fmt.Sprintf("/bin/cat %s", remotePath))
 }
 
-func (sshCommander *SSHCommander) getRemoteFileAccessRights(remoteFile string) (os.FileMode, error) {
-	bs, err := sshCommander.Run(NewSSHCommand("/usr/bin/stat --format=%a "+remoteFile, nil))
+func (sshCommander *SSHCommander) readRemoteFileAccessRights(remotePath string) (os.FileMode, error) {
+	bs, err := sshCommander.RunCmd("/usr/bin/stat --format=%%a %s", remotePath)
 	if err != nil {
 		return 0, err
 	}
@@ -71,18 +69,20 @@ func (sshCommander *SSHCommander) getRemoteFileAccessRights(remoteFile string) (
 }
 
 func (sshCommander *SSHCommander) copy(size int64, mode os.FileMode, fileName string, contents io.Reader, destination string) error {
-	if sshCommander.password == "" {
+	if sshCommander.options.Credentials.Password == "" {
 		return errors.New("You cannot use this command without sudo password")
 	}
 
-	out, err := sshCommander.Run(NewSSHCommand(fmt.Sprintf("ls %s >/dev/null 2>&1 && echo FOUND || echo NONEFOUND", path.Join("/tmp", fileName)), nil))
+	remotePath := path.Join("/tmp", fileName)
+
+	out, err := sshCommander.RunCmd("ls %s >/dev/null 2>&1 && echo FOUND || echo NONEFOUND", remotePath)
 	if err != nil {
 		return fmt.Errorf("Failed to check if file exists. Err: %s", out)
 	}
 
 	if out == "FOUND" {
-		if out, err := sshCommander.Run(NewSSHCommand(fmt.Sprintf("rm -rf %s", path.Join("/tmp", fileName)), nil)); err != nil {
-			return fmt.Errorf("Failed to delete existing file %s on remote host. Err: %s", fileName, out)
+		if out, err := sshCommander.RunCmd("rm -f %s", remotePath); err != nil {
+			return fmt.Errorf("Failed to delete existing file %s on remote host. Err: %s", remotePath, out)
 		}
 	}
 
@@ -105,7 +105,7 @@ func (sshCommander *SSHCommander) copy(size int64, mode os.FileMode, fileName st
 	}
 
 	if destination != "/tmp" {
-		if out, err := sshCommander.Run(NewSSHCommand(fmt.Sprintf("sudo mv -f /tmp/%s %s", fileName, destination), nil)); err != nil {
+		if out, err := sshCommander.RunCmd("sudo mv -f %s %s", remotePath, destination); err != nil {
 			return fmt.Errorf("Failed on transfer file to destination. Err: %s", out)
 		}
 	}

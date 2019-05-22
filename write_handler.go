@@ -18,14 +18,14 @@ type writeHandler struct {
 
 func (w *writeHandler) Write(p []byte) (int, error) {
 	if bytes.Contains(p, sudoPasswordPrompt) {
-		w.stdin.Write([]byte(w.sshCommander.password + "\n"))
+		w.stdin.Write([]byte(w.sshCommander.options.Credentials.Password + "\n"))
 		return len(p), nil
 	}
 
 	w.m.Lock()
 	defer w.m.Unlock()
 
-	if w.sshCommander.output {
+	if w.sshCommander.options.Output {
 		fmt.Print(string(p))
 	}
 

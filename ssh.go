@@ -6,118 +6,96 @@ import (
 	"io/ioutil"
 	"log"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
-//SSHCommander | SSHCommander
-type SSHCommander struct {
-	ip              string
-	port            int
-	user            string
-	password        string
-	keys            []string
-	hostKeyCallback ssh.HostKeyCallback
-	output          bool
-	signers         []ssh.Signer
-	connection      *ssh.Client
-}
-
 var matchSudoCommand = regexp.MustCompile(`\bsudo\b\s`)
 
+//SSHCommander | SSHCommander
+type SSHCommander struct {
+	options    Options
+	connection *ssh.Client
+}
+
 //NewSSHCommander | Make an new instance of SSHCommander
-func NewSSHCommander(sshCommanderOptions *SSHCommanderOptions) (*SSHCommander, error) {
-	sshCommander := &SSHCommander{}
-
-	if sshCommanderOptions.SSHHost != nil {
-		if sshCommanderOptions.SSHHost.IP == "" {
-			return nil, errors.New("Please pass SSHHost.IP")
+func NewSSHCommander(options *Options) (*SSHCommander, error) {
+	if options.Host != nil {
+		if options.Host.IP == "" {
+			return nil, errors.New("Please pass Host.IP")
 		}
 
-		if sshCommanderOptions.SSHHost.Port == 0 {
-			sshCommanderOptions.SSHHost.Port = 22
+		if options.Host.Port == 0 {
+			options.Host.Port = 22
 		}
-
-		sshCommander.ip = sshCommanderOptions.SSHHost.IP
-		sshCommander.port = sshCommanderOptions.SSHHost.Port
 	} else {
-		return nil, errors.New("Please pass SSHHost option")
+		return nil, errors.New("Please pass Host option")
 	}
 
-	if sshCommanderOptions.SSHCredentials != nil {
-		if sshCommanderOptions.SSHCredentials.User == "" {
-			return nil, errors.New("Please pass SSHCredentials.User")
+	if options.Credentials != nil {
+		if options.Credentials.User == "" {
+			return nil, errors.New("Please pass Credentials.User")
 		}
 
-		if len(sshCommanderOptions.SSHCredentials.Keys) == 0 && sshCommanderOptions.SSHCredentials.Password == "" {
-			return nil, errors.New("Please pass SSHCredentials.Keys or SSHCredentials.Password")
+		if len(options.Credentials.Keys) == 0 && options.Credentials.Password == "" {
+			return nil, errors.New("Please pass Credentials.Keys or Credentials.Password")
 		}
-
-		sshCommander.user = sshCommanderOptions.SSHCredentials.User
-		sshCommander.password = sshCommanderOptions.SSHCredentials.Password
-		sshCommander.keys = sshCommanderOptions.SSHCredentials.Keys
 	} else {
-		return nil, errors.New("Please pass SSHCredentials option")
+		return nil, errors.New("Please pass Credentials option")
 	}
 
-	if sshCommanderOptions.HostKeyCallBack != nil {
-		sshCommander.hostKeyCallback = *sshCommanderOptions.HostKeyCallBack
-	} else {
-		sshCommander.hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	if options.HostKeyCallBack == nil {
+		hostKeyCallback := ssh.InsecureIgnoreHostKey()
+
+		options.HostKeyCallBack = &hostKeyCallback
 	}
 
-	sshCommander.output = sshCommanderOptions.Output
-
-	return sshCommander, nil
+	return &SSHCommander{
+		options: *options,
+	}, nil
 }
 
 //NewSSHCommand | Make an new instance of SSHCommand
-func NewSSHCommand(command string, environments *[]string) *SSHCommand {
-	sshCommand := &SSHCommand{
+func NewSSHCommand(command string, environments []string) *Command {
+	return &Command{
 		Cmd: command,
+		Env: environments,
 	}
-
-	if environments != nil {
-		sshCommand.Env = *environments
-	}
-
-	return sshCommand
 }
 
 //SetOptions | Change SSHCommander options and reset connection with remote host
-func (sshCommander *SSHCommander) SetOptions(sshCommanderOptions *SSHCommanderOptions) error {
-	if sshCommanderOptions.SSHHost != nil {
-		if sshCommanderOptions.SSHHost.IP != "" {
-			sshCommander.ip = sshCommanderOptions.SSHHost.IP
+func (sshCommander *SSHCommander) SetOptions(options *Options) error {
+	if options.Host != nil {
+		if options.Host.IP != "" {
+			sshCommander.options.Host.IP = options.Host.IP
 		}
 
-		if sshCommanderOptions.SSHHost.Port != 0 {
-			sshCommander.port = sshCommanderOptions.SSHHost.Port
-		}
-	}
-
-	if sshCommanderOptions.SSHCredentials != nil {
-		if sshCommanderOptions.SSHCredentials.User != "" {
-			sshCommander.user = sshCommanderOptions.SSHCredentials.User
-		}
-
-		if sshCommanderOptions.SSHCredentials.Password != "" {
-			sshCommander.password = sshCommanderOptions.SSHCredentials.Password
-		}
-
-		if len(sshCommanderOptions.SSHCredentials.Keys) != 0 {
-			sshCommander.keys = sshCommanderOptions.SSHCredentials.Keys
+		if options.Host.Port != 0 {
+			sshCommander.options.Host.Port = options.Host.Port
 		}
 	}
 
-	if sshCommanderOptions.HostKeyCallBack != nil {
-		sshCommander.hostKeyCallback = *sshCommanderOptions.HostKeyCallBack
+	if options.Credentials != nil {
+		if options.Credentials.User != "" {
+			sshCommander.options.Credentials.User = options.Credentials.User
+		}
+
+		if options.Credentials.Password != "" {
+			sshCommander.options.Credentials.Password = options.Credentials.Password
+		}
+
+		if len(options.Credentials.Keys) != 0 {
+			sshCommander.options.Credentials.Keys = options.Credentials.Keys
+		}
 	}
 
-	sshCommander.output = sshCommanderOptions.Output
+	if options.HostKeyCallBack != nil {
+		hostKeyCallBack := *options.HostKeyCallBack
+
+		sshCommander.options.HostKeyCallBack = &hostKeyCallBack
+	}
 
 	return sshCommander.Reconnect()
 }
@@ -125,21 +103,27 @@ func (sshCommander *SSHCommander) SetOptions(sshCommanderOptions *SSHCommanderOp
 //Connect make connection from SSH
 func (sshCommander *SSHCommander) Connect() (err error) {
 	config := &ssh.ClientConfig{
-		User:            sshCommander.user,
+		User:            sshCommander.options.Credentials.User,
 		Auth:            []ssh.AuthMethod{},
-		HostKeyCallback: sshCommander.hostKeyCallback,
+		HostKeyCallback: *sshCommander.options.HostKeyCallBack,
 	}
 
-	if len(sshCommander.keys) == 0 {
-		config.Auth = append(config.Auth, ssh.Password(sshCommander.password))
+	if len(sshCommander.options.Credentials.Keys) == 0 {
+		config.Auth = append(config.Auth, ssh.Password(sshCommander.options.Credentials.Password))
 	} else {
-		if err = sshCommander.loadKeys(); err != nil {
+		var signers []ssh.Signer
+
+		if signers, err = sshCommander.loadKeys(); err != nil {
 			return
 		}
-		config.Auth = append(config.Auth, ssh.PublicKeys(sshCommander.signers...))
+
+		config.Auth = append(config.Auth, ssh.PublicKeys(signers...))
 	}
 
-	if sshCommander.connection, err = ssh.Dial("tcp", fmt.Sprintf("%s:%s", sshCommander.ip, strconv.Itoa(sshCommander.port)), config); err != nil {
+	if sshCommander.connection, err = ssh.Dial("tcp",
+		fmt.Sprintf("%s:%d", sshCommander.options.Host.IP, sshCommander.options.Host.Port),
+		config,
+	); err != nil {
 		err = fmt.Errorf(ErrMakeConnection, err.Error())
 	}
 
@@ -151,35 +135,32 @@ func (sshCommander *SSHCommander) Disconnect() (err error) {
 	if sshCommander.connection != nil {
 		err = sshCommander.connection.Close()
 	}
+
 	return
 }
 
 //Reconnect | Close the SSH connection and reopen
-func (sshCommander *SSHCommander) Reconnect() (err error) {
-	if err = sshCommander.Disconnect(); err != nil {
-		return
+func (sshCommander *SSHCommander) Reconnect() error {
+	if err := sshCommander.Disconnect(); err != nil {
+		return err
 	}
 
-	if err = sshCommander.Connect(); err != nil {
-		return
-	}
-
-	return
+	return sshCommander.Connect()
 }
 
 //Run | Run an command
-func (sshCommander *SSHCommander) Run(sshCommand *SSHCommand) (output string, err error) {
+func (sshCommander *SSHCommander) Run(sshCommand *Command) (output string, err error) {
 	if sshCommander.connection == nil {
 		err = errors.New("Please before run SSHCommander.Connect()")
 		return
 	}
 
-	if matchSudoCommand.MatchString(sshCommand.Cmd) && sshCommander.password == "" {
+	if matchSudoCommand.MatchString(sshCommand.Cmd) && sshCommander.options.Credentials.Password == "" {
 		err = errors.New("You cannot execute commands with sudo, pass SSHCredentials.Password for use it")
 		return
 	}
 
-	if sshCommander.output {
+	if sshCommander.options.Output {
 		fmt.Println("$", sshCommand.Cmd)
 	}
 
@@ -206,6 +187,7 @@ func (sshCommander *SSHCommander) Run(sshCommand *SSHCommand) (output string, er
 	w := &writeHandler{
 		sshCommander: sshCommander,
 	}
+
 	w.stdin, err = session.StdinPipe()
 	if err != nil {
 		err = fmt.Errorf(ErrPipeStdIn, err.Error())
@@ -221,7 +203,7 @@ func (sshCommander *SSHCommander) Run(sshCommand *SSHCommand) (output string, er
 	// -v update user's timestamp without running a command
 	// -p specify the prompt.
 	if matchSudoCommand.MatchString(cmd) {
-		cmd = fmt.Sprintf("sudo -Svp %s; %s", string(sudoPasswordPrompt), cmd)
+		cmd = fmt.Sprintf("sudo -Svp %s; %s", sudoPasswordPrompt, cmd)
 	}
 
 	if len(sshCommand.Env) > 0 {
@@ -233,7 +215,7 @@ func (sshCommander *SSHCommander) Run(sshCommand *SSHCommand) (output string, er
 	}
 
 	err = session.Wait()
-	output = strings.TrimSpace(string(w.b.Bytes()))
+	output = strings.TrimSpace(w.b.String())
 
 	if err != nil {
 		if exitError, ok := err.(*ssh.ExitError); ok {
@@ -257,18 +239,18 @@ func (sshCommander *SSHCommander) RunCmd(command string, args ...interface{}) (s
 		command = fmt.Sprintf(command, args...)
 	}
 
-	sshCommand := NewSSHCommand(command, nil)
-	return sshCommander.Run(sshCommand)
+	return sshCommander.Run(NewSSHCommand(command, nil))
 }
 
 //RunEnv | Alis for Run
-func (sshCommander *SSHCommander) RunEnv(command string, environments []string, args ...interface{}) (string, error) {
+func (sshCommander *SSHCommander) RunEnv(command string, args ...interface{}) func([]string) (string, error) {
 	if len(args) > 0 {
 		command = fmt.Sprintf(command, args...)
 	}
 
-	sshCommand := NewSSHCommand(command, &environments)
-	return sshCommander.Run(sshCommand)
+	return func(environments []string) (string, error) {
+		return sshCommander.Run(NewSSHCommand(command, environments))
+	}
 }
 
 //Reboot | Restart remote machine and return if connection is ok
@@ -279,11 +261,15 @@ func (sshCommander *SSHCommander) Reboot(retries int) error {
 			return fmt.Errorf("Failed to reboot remote machine. Err: %s", err)
 		}
 	}
+
 	sshCommander.Disconnect()
 
 	attempts := 0
 	for {
-		fmt.Println("Waiting rebooting remote machine... Retrying in 5s")
+		if sshCommander.options.Output {
+			fmt.Println("Waiting rebooting remote machine... Retrying in 5s")
+		}
+
 		time.Sleep(5 * time.Second)
 
 		if sshCommander.Connect() == nil {
@@ -308,28 +294,31 @@ func (sshCommander *SSHCommander) PowerOff() error {
 			return fmt.Errorf("Failed to poweroff remote machine. Err: %s", err)
 		}
 	}
+
 	sshCommander.Disconnect()
 
 	return nil
 }
 
-func (sshCommander *SSHCommander) loadKeys() error {
-	if len(sshCommander.signers) == 0 {
-		for k := 0; k < len(sshCommander.keys); k++ {
-			keyFile, err := ioutil.ReadFile(sshCommander.keys[k])
-			if err == nil {
-				if signer, err := ssh.ParsePrivateKey(keyFile); err == nil {
-					sshCommander.signers = append(sshCommander.signers, signer)
-				} else {
-					return err
-				}
+func (sshCommander *SSHCommander) loadKeys() ([]ssh.Signer, error) {
+	signers := make([]ssh.Signer, 0)
+
+	for k := 0; k < len(sshCommander.options.Credentials.Keys); k++ {
+		keyFile, err := ioutil.ReadFile(sshCommander.options.Credentials.Keys[k])
+		if err == nil {
+			if signer, err := ssh.ParsePrivateKey(keyFile); err == nil {
+				signers = append(signers, signer)
+			} else {
+				return signers, err
 			}
 		}
-		if len(sshCommander.signers) == 0 {
-			return errors.New(ErrKeysNotFound)
-		}
 	}
-	return nil
+
+	if len(signers) == 0 {
+		return signers, errors.New(ErrKeysNotFound)
+	}
+
+	return signers, nil
 }
 
 //LoadSSHHostKey | Load an Host Key and return HostKeyCallBack (Generally is in /etc/ssh/ssh_host_dsa_key)
